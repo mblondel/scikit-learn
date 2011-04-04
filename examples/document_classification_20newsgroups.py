@@ -45,6 +45,7 @@ from scikits.learn.feature_extraction.text import Vectorizer
 from scikits.learn.linear_model import RidgeClassifier
 from scikits.learn.svm.sparse import LinearSVC
 from scikits.learn.linear_model.sparse import SGDClassifier
+from scikits.learn.lda import LDA
 from scikits.learn import metrics
 
 
@@ -111,17 +112,27 @@ print
 
 ################################################################################
 # Benchmark classifiers
-def benchmark(clf):
+def benchmark(clf, densify=False):
     print 80 * '_'
     print "Training: "
     print clf
     t0 = time()
-    clf.fit(X_train, y_train)
+
+    if densify:
+        clf.fit(X_train.todense(), y_train)
+    else:
+        clf.fit(X_train, y_train)
+
     train_time = time() - t0
     print "train time: %0.3fs" % train_time
 
     t0 = time()
-    pred = clf.predict(X_test)
+
+    if densify:
+        pred = clf.predict(X_test.todense())
+    else:
+        pred = clf.predict(X_test)
+
     test_time = time() - t0
     print "test time:  %0.3fs" % test_time
 
@@ -143,6 +154,10 @@ def benchmark(clf):
 
     print
     return score, train_time, test_time
+
+print "lda"
+benchmark(LDA(), densify=True)
+exit()
 
 for clf, name in ((RidgeClassifier(), "Ridge Classifier"),):
     print 80*'='
