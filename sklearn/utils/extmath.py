@@ -1,12 +1,19 @@
 """
 Extended math utilities.
 """
-# Authors: G. Varoquaux, A. Gramfort, A. Passos, O. Grisel
+# Authors: Gael Varoquaux
+#          Alexandre Gramfort
+#          Alexandre Passos
+#          Olivier Grisel
+#          Mathieu Blondel
 # License: BSD
 
 import warnings
 import numpy as np
 from scipy import linalg
+
+import scipy.sparse as sp
+from scipy.sparse import sparsetools
 
 from . import check_random_state
 from . import deprecated
@@ -68,16 +75,78 @@ def density(w, **kwargs):
     return d
 
 
-def safe_sparse_dot(a, b, dense_output=False):
-    """Dot product that handle the sparse matrix case correctly"""
-    from scipy import sparse
-    if sparse.issparse(a) or sparse.issparse(b):
-        ret = a * b
-        if dense_output and hasattr(ret, "toarray"):
-            ret = ret.toarray()
-        return ret
+def _sparse_dense_dot(a, b, out=None):
+    if not sp.isspmatrix_csr(a) and not sp.isspmatrix_csc(a):
+        return a * b
+
+    if a.shape[1] != b.shape[0]:
+        raise ValueError("Matrices are not aligned.")
+
+    out_shape = (a.shape[0], b.shape[1])
+
+    if out is None:
+        out = np.zeros(out_shape, dtype=b.dtype)
     else:
-        return np.dot(a, b)
+        out.fill(0.0)
+
+    out = out.ravel()
+
+    if out.shape[0] != out_shape[0] * out_shape[1]:
+        raise ValueError("Incompatible shape for output array.")
+
+    # csr_matvecs or csc_matvecs
+    func = getattr(sparsetools, a.format + '_matvecs')
+
+    func(a.shape[0],
+         a.shape[1],
+         b.shape[1],
+         a.indptr,
+         a.indices,
+         a.data,
+         b.ravel(),
+         out)
+
+    return out.reshape(out_shape)
+
+
+def safe_sparse_dot(a, b, dense_output=False, out=None):
+    """Dot product
+
+    Parameters
+    ----------
+    a: array or sparse matrix
+        Left operand
+    b: array or sparse matrix
+        Right operand
+    dense_output: boolean
+        Only used when both a and b are sparse matrices
+    out: array
+        Only used when at least one operand is an array or when
+        dense_output=True. Not guaranteed to be honored.
+
+    Return
+    ------
+    res: array or sparse matrix
+        Array or sparse matrix resulting from the dot product.
+    """
+    transpose = False
+
+    if sp.issparse(a) and sp.issparse(b):
+        ret = a * b
+        if dense_output:
+            ret = ret.toarray()
+    elif sp.issparse(a) or sp.issparse(b):
+        if sp.issparse(b):
+            b, a = a.T, b.T
+            transpose = True
+        ret = _sparse_dense_dot(a, b, out=out)
+    else:
+        ret = np.dot(a, b)
+
+    if transpose:
+        ret = ret.T
+
+    return ret
 
 
 def randomized_range_finder(A, size, n_iterations, random_state=None):
