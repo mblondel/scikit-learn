@@ -136,10 +136,13 @@ def safe_sparse_dot(a, b, dense_output=False, out=None):
         if dense_output:
             ret = ret.toarray()
     elif sp.issparse(a) or sp.issparse(b):
-        if sp.issparse(b):
-            b, a = a.T, b.T
-            transpose = True
-        ret = _sparse_dense_dot(a, b, out=out)
+        if out is None:
+            return a * b
+        else:
+            if sp.issparse(b):
+                b, a = a.T, b.T
+                transpose = True
+            ret = _sparse_dense_dot(a, b, out=out)
     else:
         ret = np.dot(a, b)
 
