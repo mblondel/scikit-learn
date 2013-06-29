@@ -14,7 +14,7 @@ from scipy import linalg
 
 from ..base import BaseEstimator, TransformerMixin
 from ..externals import six
-from ..utils import array2d, as_float_array, check_random_state
+from ..utils import array2d, as_float_array, check_random_state, deprecated
 
 __all__ = ['fastica', 'FastICA']
 
@@ -186,7 +186,7 @@ def fastica(X, n_components=None, algorithm="parallel", whiten=True,
         'None'.
 
     W: (n_components, n_components) array
-        estimated un-mixing matrix
+        Estimated un-mixing matrix.
         The mixing matrix can be obtained by::
 
             w = np.dot(W, K.T)
@@ -194,7 +194,6 @@ def fastica(X, n_components=None, algorithm="parallel", whiten=True,
 
     S: (n_components, n) array
         estimated source matrix
-
 
     Notes
     -----
@@ -335,6 +334,8 @@ class FastICA(BaseEstimator, TransformerMixin):
         The mixing matrix to be used to initialize the algorithm.
     random_state: int or RandomState
         Pseudo number generator state used for random sampling.
+    fit_inverse_transform: boolean, optional, default=False
+        Whether to enable the inverse_transform method.
 
     Attributes
     ----------
@@ -353,7 +354,7 @@ class FastICA(BaseEstimator, TransformerMixin):
 
     def __init__(self, n_components=None, algorithm='parallel', whiten=True,
                  fun='logcosh', fun_args=None, max_iter=200, tol=1e-4,
-                 w_init=None, random_state=None):
+                 w_init=None, random_state=None, fit_inverse_transform=False):
         super(FastICA, self).__init__()
         self.n_components = n_components
         self.algorithm = algorithm
@@ -364,6 +365,7 @@ class FastICA(BaseEstimator, TransformerMixin):
         self.tol = tol
         self.w_init = w_init
         self.random_state = random_state
+        self.fit_inverse_transform = fit_inverse_transform
 
     def fit_transform(self, X, y=None):
         """Fit the model and recover the sources from X.
@@ -387,6 +389,14 @@ class FastICA(BaseEstimator, TransformerMixin):
             self.components_ = np.dot(unmixing_, whitening_)
         else:
             self.components_ = unmixing_
+
+        try:
+            del self.mixing_
+        except AttributeError:
+            pass
+        if self.fit_inverse_transform:
+            self.mixing_ = linalg.pinv(self.components_)
+
         self.sources_ = sources_
         return sources_
 
@@ -422,6 +432,8 @@ class FastICA(BaseEstimator, TransformerMixin):
         X = array2d(X)
         return np.dot(X, self.components_.T)
 
+    @deprecated("To be removed in 0.16. Set fit_inverse_transform=True"
+                " and inspect the mixing_ attribute.")
     def get_mixing_matrix(self):
         """Compute the mixing matrix.
 
@@ -429,11 +441,13 @@ class FastICA(BaseEstimator, TransformerMixin):
         -------
         mixing_matrix : array, shape (n_features, n_components)
         """
-        return linalg.pinv(self.components_)
+        try:
+            return self.mixing_
+        except AttributeError:
+            return linalg.pinv(self.components_)
 
     def inverse_transform(self, X):
-        """Transform the sources back to the mixed data
-        (apply the mixing matrix).
+        """Transform the sources back to the mixed data (apply mixing matrix).
 
         Parameters
         ----------
@@ -445,4 +459,7 @@ class FastICA(BaseEstimator, TransformerMixin):
         -------
         X_new : array-like, shape (n_samples, n_features)
         """
-        return np.dot(X, self.get_mixing_matrix().T)
+        if not self.fit_inverse_transform:
+            raise ValueError("inverse_transform not enabled;"
+                             " set fit_inverse_transform=True before fit")
+        return np.dot(X, self.mixing_.T)
