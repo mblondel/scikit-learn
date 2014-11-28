@@ -742,3 +742,12 @@ def test_grid_search_failing_classifier_raise():
 
     # FailingClassifier issues a ValueError so this is what we look for.
     assert_raises(ValueError, gs.fit, X, y)
+
+
+def test_auc_regressor():
+    X, y = make_classification(n_classes=2, random_state=0)
+    param_grid = {"max_depth": [1, 2, 3, 4]}
+    tree = DecisionTreeRegressor()
+    gs = GridSearchCV(tree, param_grid, scoring="roc_auc")
+    gs.fit(X, y)
+    assert_equal(gs.best_estimator_.max_depth, 1)

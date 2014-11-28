@@ -267,6 +267,24 @@ class BaseEstimator(object):
 class ClassifierMixin(object):
     """Mixin class for all classifiers in scikit-learn."""
 
+    def predict_score(self, X):
+        if hasattr(self, "predict_proba"):
+            return self.predict_proba(X)
+
+        elif hasattr(self, "decision_function"):
+            df = self.decision_function(X)
+
+            if len(df.shape) == 1 or df.shape[1] == 1:
+                # Return an array of shape (n_samples, 2) even in the binary
+                # case.
+                df = df.ravel()
+                df = np.array([-df, df]).T
+
+            return df
+
+        else:
+            raise ValueError
+
     def score(self, X, y, sample_weight=None):
         """Returns the mean accuracy on the given test data and labels.
 
@@ -298,6 +316,9 @@ class ClassifierMixin(object):
 ###############################################################################
 class RegressorMixin(object):
     """Mixin class for all regression estimators in scikit-learn."""
+
+    def predict_score(self, X):
+        return self.predict(X)
 
     def score(self, X, y, sample_weight=None):
         """Returns the coefficient of determination R^2 of the prediction.
