@@ -5,12 +5,35 @@
 # License: BSD 3 clause
 
 import numpy as np
+from scipy.sparse import linalg as sp_linalg
 
 from .base import BaseEstimator, RegressorMixin
 from .metrics.pairwise import pairwise_kernels
 from .linear_model.ridge import _solve_cholesky_kernel
 from .utils import check_X_y
+from .utils import check_array
+from .utils import gen_even_slices
 from .utils.validation import check_is_fitted
+
+
+def _cg(X, y, kernel, kernel_params, alpha, max_iter=None, tol=1e-3):
+    n_samples = X.shape[0]
+
+    def mv(x):
+        ret = np.zeros(n_samples, dtype=X.dtype)
+
+        start = 0
+        for s in gen_even_slices(n_samples, 1000):
+            K = pairwise_kernels(X, X[s], metric=kernel, filter_params=True,
+                                 **kernel_params)
+            size = K.shape[1]
+            ret[start:start + size] = np.dot(K.T, x)
+            start += size
+        return ret + alpha * x
+
+    C = sp_linalg.LinearOperator((n_samples, n_samples), matvec=mv, dtype=X.dtype)
+    coef, info = sp_linalg.cg(C, y, maxiter=max_iter, tol=tol)
+    return coef
 
 
 class KernelRidge(BaseEstimator, RegressorMixin):
@@ -100,21 +123,29 @@ class KernelRidge(BaseEstimator, RegressorMixin):
                 kernel_params=None)
     """
     def __init__(self, alpha=1, kernel="linear", gamma=None, degree=3, coef0=1,
-                 kernel_params=None):
+                 kernel_params=None, solver="cholesky", max_iter=None,
+                 tol=1e-3):
         self.alpha = alpha
         self.kernel = kernel
         self.gamma = gamma
         self.degree = degree
         self.coef0 = coef0
         self.kernel_params = kernel_params
+        self.solver = solver
+        self.max_iter = max_iter
+        self.tol = tol
 
-    def _get_kernel(self, X, Y=None):
+    def _get_kernel_params(self):
         if callable(self.kernel):
             params = self.kernel_params or {}
         else:
             params = {"gamma": self.gamma,
                       "degree": self.degree,
                       "coef0": self.coef0}
+        return params
+
+    def _get_kernel(self, X, Y=None):
+        params = self._get_kernel_params()
         return pairwise_kernels(X, Y, metric=self.kernel,
                                 filter_params=True, **params)
 
@@ -141,23 +172,33 @@ class KernelRidge(BaseEstimator, RegressorMixin):
         self : returns an instance of self.
         """
         # Convert data
-        X, y = check_X_y(X, y, accept_sparse=("csr", "csc"), multi_output=True)
+        if self.solver == "cholesky":
+            X, y = check_X_y(X, y, accept_sparse=("csr", "csc"), multi_output=True)
+        elif self.solver == "sparse_cg":
+            X, y = check_X_y(X, y, accept_sparse="csr", multi_output=True)
+        else:
+            raise ValueError("Invalid solver")
 
-        n_samples = X.shape[0]
-        K = self._get_kernel(X)
-        alpha = np.atleast_1d(self.alpha)
+        if self.solver == "cholesky":
+            n_samples = X.shape[0]
+            K = self._get_kernel(X)
+            alpha = np.atleast_1d(self.alpha)
 
-        ravel = False
-        if len(y.shape) == 1:
-            y = y.reshape(-1, 1)
-            ravel = True
+            ravel = False
+            if len(y.shape) == 1:
+                y = y.reshape(-1, 1)
+                ravel = True
 
-        copy = self.kernel == "precomputed"
-        self.dual_coef_ = _solve_cholesky_kernel(K, y, alpha,
-                                                 sample_weight,
-                                                 copy)
-        if ravel:
-            self.dual_coef_ = self.dual_coef_.ravel()
+            copy = self.kernel == "precomputed"
+            self.dual_coef_ = _solve_cholesky_kernel(K, y, alpha,
+                                                     sample_weight,
+                                                     copy)
+            if ravel:
+                self.dual_coef_ = self.dual_coef_.ravel()
+        else:
+            self.dual_coef_ = _cg(X, y, self.kernel, self._get_kernel_params(),
+                                  self.alpha, tol=self.tol,
+                                  max_iter=self.max_iter)
 
         self.X_fit_ = X
 
@@ -177,5 +218,18 @@ class KernelRidge(BaseEstimator, RegressorMixin):
             Returns predicted values.
         """
         check_is_fitted(self, ["X_fit_", "dual_coef_"])
-        K = self._get_kernel(X, self.X_fit_)
-        return np.dot(K, self.dual_coef_)
+
+        if self.solver == "cholesky":
+            K = self._get_kernel(X, self.X_fit_)
+            return np.dot(K, self.dual_coef_)
+        else:
+            X = check_array(X, accept_sparse="csr")
+            n_samples = X.shape[0]
+            pred = np.zeros(n_samples, dtype=np.float64)
+            start = 0
+            for s in gen_even_slices(n_samples, 1000):
+                K = self._get_kernel(X[s], self.X_fit_)
+                size = K.shape[0]
+                pred[start:start + size] = np.dot(K, self.dual_coef_)
+                start += size
+            return pred
